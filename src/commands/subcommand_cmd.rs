@@ -12,8 +12,15 @@ use docopt::Docopt;
 use parity_crypto::Keccak256;
 use parity_wordlist;
 use parity_bytes::ToPretty;
+use threadpool;
 mod brain;
 use brain::Brain;
+mod brian_prefix;
+use brian_prefix::BrainPrefix;
+mod prefix;
+use prefix::Prefix;
+mod brain_recover;
+use brain_recover::PhrasesIterator;
 
 const USAGE: &'static str = r#"
 OpenEthereum keys generator.
@@ -173,7 +180,67 @@ fn execute<S, I>(command: I) -> Result<String, Error> where I: IntoIterator<Item
             return Ok(format!("{}", USAGE))
         };
         Ok(format!("{}", ok))
-    } else {
+    }else if args.cmd_generate{
+        let display_mode = DisplayMode::new(&args);
+        let result = if args.cmd_random {
+            if args.flag_brain {
+                let mut brain = BrainPrefix::new(vec![0], usize::max_value(), BRAIN_WORDS);
+                let keypair = brain.generate()?;
+                let phrase = format!("recovery phrase: {}", brain.phrase());
+                (keypair, Some(phrase))
+            } else {
+                (Random.generate(), None)
+            }
+        } else if args.cmd_prefix {
+            let prefix: Vec<_> = args.arg_prefix.from_hex()?;
+            let brain = args.flag_brain;
+            in_threads(move || {
+                let iterations = 1024;
+                let prefix = prefix.clone();
+                move || {
+                    let prefix = prefix.clone();
+                    let res = if brain {
+                        let mut brain = BrainPrefix::new(prefix, iterations, BRAIN_WORDS);
+                        let result = brain.generate();
+                        let phrase = format!("recovery phrase: {}", brain.phrase());
+                        result.map(|keypair| (keypair, Some(phrase)))
+                    } else {
+                        let result = Prefix::new(prefix, iterations).generate();
+                        result.map(|res| (res, None))
+                    };
+                    Ok(res.map(Some).unwrap_or(None))
+                }
+            })?
+        } else {
+            return Ok(format!("{}", USAGE))
+        };
+        Ok(display(result, display_mode))
+    }else if args.cmd_recover {
+        let display_mode = DisplayMode::new(&args);
+        let known_phrase = args.arg_known_phrase;
+        let address = args.arg_address.parse().map_err(|_| EthkeyError::InvalidAddress)?;
+        let (phrase, keypair) = in_threads(move || {
+            let mut it = brain_recover::PhrasesIterator::from_known_phrase(&known_phrase, BRAIN_WORDS);
+            move || {
+                let mut i = 0;
+                while let Some(phrase) = it.next() {
+                    i += 1;
+
+                    let keypair = Brain::new(phrase.clone()).generate();
+                    if keypair.address() == address {
+                        return Ok(Some((phrase, keypair)))
+                    }
+
+                    if i >= 1024 {
+                        return Ok(None)
+                    }
+                }
+
+                Err(EthkeyError::Custom("Couldn't find any results.".into()))
+            }
+        })?;
+        Ok(display((keypair, Some(phrase)), display_mode))
+    }else {
         Ok(format!("{}", USAGE))
     }
 }
@@ -197,6 +264,46 @@ fn display(result: (KeyPair, Option<String>), mode: DisplayMode) -> String {
         DisplayMode::Public => format!("{:x}", keypair.public()),
         DisplayMode::Address => format!("{:x}", keypair.address()),
     }
+}
+fn in_threads<F, X, O>(prepare: F) -> Result<O, EthkeyError> where
+    O: Send + 'static,
+    X: Send + 'static,
+    F: Fn() -> X,
+    X: FnMut() -> Result<Option<O>, EthkeyError>,
+{
+    let pool = threadpool::Builder::new().build();
+
+    let (tx, rx) = sync::mpsc::sync_channel(1);
+    let is_done = sync::Arc::new(sync::atomic::AtomicBool::default());
+
+    for _ in 0..pool.max_count() {
+        let is_done = is_done.clone();
+        let tx = tx.clone();
+        let mut task = prepare();
+        pool.execute(move || {
+            loop {
+                if is_done.load(sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+
+                let res = match task() {
+                    Ok(None) => continue,
+                    Ok(Some(v)) => Ok(v),
+                    Err(err) => Err(err),
+                };
+
+                // We are interested only in the first response.
+                let _ = tx.send(res);
+            }
+        });
+    }
+
+    if let Ok(solution) = rx.recv() {
+        is_done.store(true, sync::atomic::Ordering::SeqCst);
+        return solution;
+    }
+
+    Err(EthkeyError::Custom("No results found.".into()))
 }
 
 #[derive(Debug, StructOpt, Clone)]
@@ -228,6 +335,17 @@ enum Command {
         #[structopt(long = "message")]
         message:String,
     },
+    Generate{
+        method:String,
+        #[structopt(long = "brain",default_value="No brain!")]
+        brain:String,
+        #[structopt(default_value="nothing")]
+        prefix:String,
+    },
+    Recover{
+        address:String,
+        phrase:String,
+    },
 }
 
 //  ./target/debug/bloom-cmd ethkey info 17d08f5fe8c77af811caa0c9a187e668ce3b74a99acc3f6d976f075fa8e0be55
@@ -236,6 +354,11 @@ enum Command {
 //  ./target/debug/bloom-cmd ethkey verify --public 689268c0ff57a20cd299fa60d3fb374862aff565b20b5f1767906a99e6e09f3ff04ca2b2a5cd22f62941db103c0356df1a8ed20ce322cab2483db67685afd124 --signature c1878cf60417151c766a712653d26ef350c8c75393458b7a9be715f053215af63dfd3b02c2ae65a8677917a8efa3172acb71cb90196e42106953ea0363c5aaf200 --message bd50b7370c3f96733b31744c6c45079e7ae6c8d299613246d28ebcef507ec987
 //  ./target/debug/bloom-cmd ethkey verify --public 689268c0ff57a20cd299fa60d3fb374862aff565b20b5f1767906a99e6e09f3ff04ca2b2a5cd22f62941db103c0356df1a8ed20ce322cab2483db67685afd124 --signature c1878cf60417151c766a712653d26ef350c8c75393458b7a9be715f053215af63dfd3b02c2ae65a8677917a8efa3172acb71cb90196e42106953ea0363c5aaf200 --message bd50b7370c3f96733b31744c6c45079e7ae6c8d299613246d28ebcef507ec986
 //  ./target/debug/bloom-cmd ethkey verify --address 26d1ec50b4e62c1d1a40d16e7cacc6a6580757d5 --signature c1878cf60417151c766a712653d26ef350c8c75393458b7a9be715f053215af63dfd3b02c2ae65a8677917a8efa3172acb71cb90196e42106953ea0363c5aaf200 --message bd50b7370c3f96733b31744c6c45079e7ae6c8d299613246d28ebcef507ec987
+//  ./target/debug/bloom-cmd ethkey generate random
+//  ./target/debug/bloom-cmd ethkey generate random --brain brain
+//  ./target/debug/bloom-cmd ethkey generate prefix ff
+//  ./target/debug/bloom-cmd ethkey generate prefix --brain 00cf
+//  ./target/debug/bloom-cmd ethkey recover 00cf0cb028ae6f232eb39e8299157ddd321fd5c7 "angelfish ambulance rocking cushy liqueur unmoved ripcord numerator wrongful dwelling guiding sublime"
 impl EthkeyCmd {
     pub fn run(&self, mut backend: &str) {
         match &self.cmd {
@@ -287,6 +410,54 @@ impl EthkeyCmd {
                     println!("Deploy {:#?}", backend);
                     println!("{}",result.unwrap());
                 }
+            }
+            Command::Generate{method,brain,prefix}=>{
+                if(method.to_string()=="random".to_string()){
+                    if(brain.to_string()=="No brain!".to_string()){
+                        let command = vec!["ethkey","generate","random"]
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<String>>();
+                        let result=execute(command);
+                        println!("Deploy {:#?}", backend);
+                        println!("{}",result.unwrap());
+                    }else{
+                        let command = vec!["ethkey","generate","random","--brain"]
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<String>>();
+                        let result=execute(command);
+                        println!("Deploy {:#?}", backend);
+                        println!("{}",result.unwrap());
+                    }
+                }else{
+                    if(brain.to_string()=="No brain!".to_string()){
+                        let command = vec!["ethkey","generate","prefix",&prefix.to_string()]
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<String>>();
+                        let result=execute(command);
+                        println!("Deploy {:#?}", backend);
+                        println!("{}",result.unwrap());
+                    }else{
+                        let command = vec!["ethkey","generate","prefix","--brain",&brain.to_string()]
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<String>>();
+                        let result=execute(command);
+                        println!("Deploy {:#?}", backend);
+                        println!("{}",result.unwrap());
+                    }
+                }
+            }
+            Command::Recover{address,phrase}=>{
+                let command = vec!["ethkey", "recover" ,&address.to_string(),&phrase.to_string()]
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<String>>();
+                let result=execute(command);
+                println!("Deploy {:#?}", backend);
+                println!("{}",result.unwrap());
             }
         }
     }
