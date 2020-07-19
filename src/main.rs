@@ -2,6 +2,8 @@ mod commands;
 
 use commands::Subcommand; //自定义
 use structopt::StructOpt; //官方
+#[macro_use]
+extern crate log;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
