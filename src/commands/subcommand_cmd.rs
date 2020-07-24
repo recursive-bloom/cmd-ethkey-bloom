@@ -1,5 +1,6 @@
 use ethereum_types::{H160, U256, H256};
 use hex;
+use web3;
 use structopt::StructOpt;
 use std::fs::File;
 use std::str::FromStr; // !!! Necessary for H160::from_str(address).expect("...");
@@ -21,6 +22,8 @@ mod prefix;
 use prefix::Prefix;
 mod brain_recover;
 use brain_recover::PhrasesIterator;
+mod raw_transaction;
+use raw_transaction::RawTransaction;
 
 const USAGE: &'static str = r#"
 OpenEthereum keys generator.
@@ -306,6 +309,34 @@ fn in_threads<F, X, O>(prepare: F) -> Result<O, EthkeyError> where
     Err(EthkeyError::Custom("No results found.".into()))
 }
 
+fn sign_tx(nonce:&String,to:&String,value:&String,gas_price:&String,gas:&String,data:&String,private_key:&String,chain_id:&String){
+    let nonce=nonce.to_string().parse::<u128>().unwrap();
+    let to=to.to_string().parse::<u64>().unwrap();
+    let value=value.to_string().parse::<u128>().unwrap();
+    let gas_price=gas_price.to_string().parse::<u128>().unwrap();
+    let gas=gas.to_string().parse::<u128>().unwrap();
+    let data=data.to_string();
+    let private_key=private_key.to_string();
+    let chain_id=chain_id.to_string().parse::<u32>().unwrap();
+    let tx = raw_transaction::RawTransaction {
+        nonce: web3::types::U256::from(nonce),
+        to: Some(web3::types::H160::from_low_u64_be(to)),
+        value: web3::types::U256::from(value),
+        gas_price: web3::types::U256::from(gas_price),
+        gas: web3::types::U256::from(gas),
+        data: hex::decode(
+            data
+        ).unwrap(),
+    };
+    let mut data: [u8; 32] = Default::default();
+    data.copy_from_slice(&hex::decode(
+        private_key
+    ).unwrap());
+    let private_key = web3::types::H256(data);
+    let raw_rlp_bytes = tx.sign(&private_key, &chain_id);
+    println!("{:?}",raw_rlp_bytes);
+}
+
 #[derive(Debug, StructOpt, Clone)]
 pub struct EthkeyCmd {
     #[structopt(subcommand)]
@@ -346,6 +377,24 @@ enum Command {
         address:String,
         phrase:String,
     },
+    Signtx{
+        #[structopt(long = "nonce")]
+        nonce:String,
+        #[structopt(long = "to")]
+        to:String,
+        #[structopt(long = "value")]
+        value:String,
+        #[structopt(long = "gas-price")]
+        gas_price:String,
+        #[structopt(long = "gas")]
+        gas:String,
+        #[structopt(long = "data")]
+        data:String,
+        #[structopt(long = "private-key")]
+        private_key:String,
+        #[structopt(long = "chain-id")]
+        chain_id:String,
+    },
 }
 
 //  ./target/debug/bloom-cmd ethkey info 17d08f5fe8c77af811caa0c9a187e668ce3b74a99acc3f6d976f075fa8e0be55
@@ -359,6 +408,7 @@ enum Command {
 //  ./target/debug/bloom-cmd ethkey generate prefix ff
 //  ./target/debug/bloom-cmd ethkey generate prefix --brain 00cf
 //  ./target/debug/bloom-cmd ethkey recover 00cf0cb028ae6f232eb39e8299157ddd321fd5c7 "angelfish ambulance rocking cushy liqueur unmoved ripcord numerator wrongful dwelling guiding sublime"
+//  ./target/debug/bloom-cmd ethkey signtx --nonce 0 --to 0 --value 0 --gas-price 10000 --gas 21240 --data 7f7465737432000000000000000000000000000000000000000000000000000000600057 --private-key 2a3526dd05ad2ebba87673f711ef8c336115254ef8fcd38c4d8166db9a8120e4 --chain-id 3
 impl EthkeyCmd {
     pub fn run(&self, mut backend: &str) {
         match &self.cmd {
@@ -458,6 +508,9 @@ impl EthkeyCmd {
                 let result=execute(command);
                 println!("Deploy {:#?}", backend);
                 println!("{}",result.unwrap());
+            }
+            Command::Signtx{nonce,to,value,gas_price,gas,data,private_key,chain_id}=>{
+                sign_tx(nonce,to,value,gas_price,gas,data,private_key,chain_id);
             }
         }
     }
