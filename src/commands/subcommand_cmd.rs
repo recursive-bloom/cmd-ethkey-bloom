@@ -311,7 +311,11 @@ fn in_threads<F, X, O>(prepare: F) -> Result<O, EthkeyError> where
 
 fn sign_tx(nonce:&String,to:&String,value:&String,gas_price:&String,gas:&String,data:&String,private_key:&String,chain_id:&String){
     let nonce=nonce.to_string().parse::<u128>().unwrap();
-    let to=to.to_string().parse::<u64>().unwrap();
+    let to=to.to_string();
+    let mut to_t: [u8; 20] = Default::default();
+    to_t.copy_from_slice(&hex::decode(
+        to
+    ).unwrap());
     let value=value.to_string().parse::<u128>().unwrap();
     let gas_price=gas_price.to_string().parse::<u128>().unwrap();
     let gas=gas.to_string().parse::<u128>().unwrap();
@@ -320,7 +324,7 @@ fn sign_tx(nonce:&String,to:&String,value:&String,gas_price:&String,gas:&String,
     let chain_id=chain_id.to_string().parse::<u32>().unwrap();
     let tx = raw_transaction::RawTransaction {
         nonce: web3::types::U256::from(nonce),
-        to: Some(web3::types::H160::from_low_u64_be(to)),
+        to: Some(web3::types::H160 (to_t)),
         value: web3::types::U256::from(value),
         gas_price: web3::types::U256::from(gas_price),
         gas: web3::types::U256::from(gas),
@@ -334,7 +338,9 @@ fn sign_tx(nonce:&String,to:&String,value:&String,gas_price:&String,gas:&String,
     ).unwrap());
     let private_key = web3::types::H256(data);
     let raw_rlp_bytes = tx.sign(&private_key, &chain_id);
-    println!("{:?}",raw_rlp_bytes);
+    let r=hex::encode(raw_rlp_bytes);
+    //println!("{:?}",raw_rlp_bytes);
+    println!("{}",r);
 }
 
 #[derive(Debug, StructOpt, Clone)]
@@ -408,7 +414,7 @@ enum Command {
 //  ./target/debug/bloom-cmd ethkey generate prefix ff
 //  ./target/debug/bloom-cmd ethkey generate prefix --brain 00cf
 //  ./target/debug/bloom-cmd ethkey recover 00cf0cb028ae6f232eb39e8299157ddd321fd5c7 "angelfish ambulance rocking cushy liqueur unmoved ripcord numerator wrongful dwelling guiding sublime"
-//  ./target/debug/bloom-cmd ethkey signtx --nonce 0 --to 0 --value 0 --gas-price 10000 --gas 21240 --data 7f7465737432000000000000000000000000000000000000000000000000000000600057 --private-key 2a3526dd05ad2ebba87673f711ef8c336115254ef8fcd38c4d8166db9a8120e4 --chain-id 3
+//  ./target/debug/bloom-cmd ethkey signtx --nonce 0 --to 26d1ec50b4e62c1d1a40d16e7cacc6a6580757d5 --value 0 --gas-price 10000 --gas 21240 --data 7f7465737432000000000000000000000000000000000000000000000000000000600057 --private-key 2a3526dd05ad2ebba87673f711ef8c336115254ef8fcd38c4d8166db9a8120e4 --chain-id 3
 impl EthkeyCmd {
     pub fn run(&self, mut backend: &str) {
         match &self.cmd {
