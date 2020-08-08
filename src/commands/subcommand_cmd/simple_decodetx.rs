@@ -413,4 +413,20 @@ pub fn should_agree_with_vitalik(raw_tx:&String,sender_addr:&String) {
     println!("Address: {:?}", addr);
     println!("Public key: {:?}", pub_key.unwrap());
 }
+pub fn should_agree_with_vitalik_withoutaddr(raw_tx:&String) {
+    let  bytes: Vec<u8> = raw_tx.from_hex().unwrap();
+    let signed = rlp::decode(&bytes).expect("decoding tx data failed");
+    let signed = SignedTransaction::new(signed).unwrap();
+    println!("Sender: {:?}", signed.sender());
+    println!("ChainID: {:?}", signed.chain_id()); // "None" means the tx can be sent to both ETH and ETC ???
+    let (uv_tx, addr, pub_key) = signed.deconstruct();
+    println!("Unverified Transacion:\nnonce: {}\ngas price: {}\ngas: {}",uv_tx.nonce,uv_tx.gas_price,uv_tx.gas);
+    match uv_tx.action {
+        Action::Create=>println!("no action"),
+        Action::Call(data)=>println!("action: {:?}",data),
+    }
+    println!("data: {:?}\nvalue: {}\nv: {}\nr: {}\ns: {}\nhash: {:?}",uv_tx.data,uv_tx.value,uv_tx.v,uv_tx.r,uv_tx.s,uv_tx.hash);
+    println!("Address: {:?}", addr);
+    println!("Public key: {:?}", pub_key.unwrap());
+}
 
