@@ -27,6 +27,7 @@ mod raw_transaction;
 use raw_transaction::RawTransaction;
 mod simple_decodetx;
 use simple_decodetx::should_agree_with_vitalik;
+use simple_decodetx::should_agree_with_vitalik_withoutaddr;
 
 const USAGE: &'static str = r#"
 OpenEthereum keys generator.
@@ -407,7 +408,7 @@ enum Command {
     Decodetx{
         #[structopt(long = "raw-tx")]
         raw_tx:String,
-        #[structopt(long = "sender-addr")]
+        #[structopt(long = "sender-addr",default_value="No sender_addr!")]
         sender_addr:String,
     },
 }
@@ -425,6 +426,7 @@ enum Command {
 //  ./target/debug/bloom-cmd ethkey recover 00cf0cb028ae6f232eb39e8299157ddd321fd5c7 "angelfish ambulance rocking cushy liqueur unmoved ripcord numerator wrongful dwelling guiding sublime"
 //  ./target/debug/bloom-cmd ethkey signtx --nonce 0 --to 26d1ec50b4e62c1d1a40d16e7cacc6a6580757d5 --value 0 --gas-price 10000 --gas 21240 --data 7f7465737432000000000000000000000000000000000000000000000000000000600057 --private-key 2a3526dd05ad2ebba87673f711ef8c336115254ef8fcd38c4d8166db9a8120e4 --chain-id 3
 //  ./target/debug/bloom-cmd ethkey decodetx --raw-tx f8a80c8477359400825a109400e150d741eda1d49d341189cae4c08a73a49c9580b844a9059cbb00000000000000000000000085206176182d759c75a8ec4c884ac282f58d7b3d000000000000000000000000000000000000000000000005f68e8131ecf800001ba07d3db67dc644579d37c645456986a19b648a97d7deec79e23f452fcfdfdef197a063bcea7d043ab01cc8f5b9ecd6a87d8c9d373b422bedd05d772799241380d6f2 --sender-addr 0x8d1144b4c2b719a2618b9742364c8e1a8f925ae5
+//  ./target/debug/bloom-cmd ethkey decodetx --raw-tx f8a80c8477359400825a109400e150d741eda1d49d341189cae4c08a73a49c9580b844a9059cbb00000000000000000000000085206176182d759c75a8ec4c884ac282f58d7b3d000000000000000000000000000000000000000000000005f68e8131ecf800001ba07d3db67dc644579d37c645456986a19b648a97d7deec79e23f452fcfdfdef197a063bcea7d043ab01cc8f5b9ecd6a87d8c9d373b422bedd05d772799241380d6f2
 impl EthkeyCmd {
     pub fn run(&self, mut backend: &str) {
         match &self.cmd {
@@ -529,7 +531,11 @@ impl EthkeyCmd {
                 sign_tx(nonce,to,value,gas_price,gas,data,private_key,chain_id);
             }
             Command::Decodetx{raw_tx,sender_addr}=>{
-                should_agree_with_vitalik(raw_tx,sender_addr);
+                if(sender_addr.to_string()=="No sender_addr!".to_string()){
+                    should_agree_with_vitalik_withoutaddr(raw_tx);
+                }else{
+                    should_agree_with_vitalik(raw_tx,sender_addr);
+                }
             }
         }
     }
